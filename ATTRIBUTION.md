@@ -17,4 +17,5 @@ Primary modifications by: <Sutao Xu @ HIT>
 
 License:
   This project is distributed under the GNU General Public License v2 (GPLv2).
-  See LICENSE (or COPYING) for full license text.
+
+  See LICENSE for full license text.
