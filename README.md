@@ -17,6 +17,8 @@ This project implements a fast, GPU-accelerated LiDAR–IMU SLAM system using a 
   <figcaption><strong>Figure 1.</strong> Voxel-map keys (voxel-coordinate) array, values (voxel-info) array, and hash-table schematic.</figcaption>
 </figure>
 
+
+
 - Testing Platform and Compatibility: We have tested our implementation on a desktop with an Intel i7-12700KF CPU, 32 GB RAM, and an NVIDIA GTX 1070 GPU (8 GB). On this setup, the GPU-accelerated components run correctly. We attempted to run the code on other hardware (newer GPUs) but encountered failures, likely due to architectural differences. Users should note that GPU architecture may affect whether the code runs without errors.
 - Files: The core changes we made are located in the files voxel_map_cuda.cu and voxel_map_cuda.h (which implement the CUDA hash-table operations) and a few added lines in LIVMapper.cpp.
 
@@ -40,10 +42,14 @@ At the first LiDAR frame, we build a voxelized map in GPU memory.A CUDA kernel l
   <figcaption><strong>Figure 2.</strong> Illustration of root-voxel map construction under thread contention (example with 8 threads).</figcaption>
 </figure>
 
+
+
 <figure>
   <img src="./figures/Non_thread_contention.png" alt="Illustration of root-voxel map construction without thread contention (example with 5 threads)." />
   <figcaption><strong>Figure 3.</strong> Illustration of root-voxel map construction without thread contention (example with 5 threads).</figcaption>
 </figure>
+
+
 
 Because each inserter thread reserves a unique index in the key/value arrays using an atomic counter before attempting to insert the corresponding key into the static_map, it is possible that a thread will reserve (and write to) an array slot but then fail to install the hash entry (for example, because another thread inserted the same key first). In that case the reserved array slot becomes temporarily occupied but logically invalid. To avoid leaking these slots permanently, we reclaim them in a later cleanup phase using the following scheme:
 - every value entry contains an is_valid_ flag that is set to 1 only after the thread successfully inserts the key-value pair into the static_map; if insertion fails, the thread either leaves is_valid_=0;
@@ -56,6 +62,8 @@ This reclamation loop (mark invalid → collect into free list → reuse indices
   <figcaption><strong>Figure 4.</strong> Illustration of invalid root-voxel key/value-index reclamation and hash-table update process.</figcaption>
 </figure>
 
+
+
 After building the root map, we launch one thread per root voxel to attempt a plane fit: if a root voxel has enough points (above a minimum), we compute a best-fit plane; if the fit fails (high error) and the point count is above a threshold, we subdivide that voxel into 8 leaf voxels, inserting these new keys into the leaf static_map and redistributing the points. This partitioning step also runs on the GPU, with threads splitting or fitting voxels in parallel.
 
 <figure>
@@ -63,10 +71,14 @@ After building the root map, we launch one thread per root voxel to attempt a pl
   <figcaption><strong>Figure 5.</strong> Illustration of plane fitting inside a root voxel and subdivision into leaf voxels.</figcaption>
 </figure>
 
+
+
 <figure>
   <img src="./figures/Leaf_voxel_plane_fitting.png" alt="Illustration of leaf-voxel plane-fitting process." />
   <figcaption><strong>Figure 6.</strong> Illustration of leaf-voxel plane-fitting process.</figcaption>
 </figure>
+
+
 
 ### 4.2 State Estimation
 
@@ -80,5 +92,6 @@ Once the voxel map (root + leaf) is built, we perform pose update using the iter
 After updating the state, we must integrate the new frame into the map. First, we recycle invalid voxels (is_valid_==0). Then we repeat the 4.1 process with the new LiDAR frame’s points, inserting or updating voxels in the same two hash tables.
 
 ### 4.4 Sliding-Window Cleaning
+
 
 The sliding-window cleaning step follows the same logic as the original algorithm. The key difference in our GPU implementation is how deletion and memory reclamation are handled to avoid unsafe concurrent frees on device memory. When a root voxel is selected for removal, we do not immediately reclaim its preallocated array slots. Instead, we mark the corresponding entries in the root-value array and any associated leaf-value array entries by setting their is_valid_ flags to 0. The actual reclamation of those array slots is deferred and performed during the next map update pass (4.3). This deferred-reclamation strategy avoids race conditions and simplifies parallel memory management on the GPU while preserving the same semantic behavior as the original sliding-window deletion policy.
